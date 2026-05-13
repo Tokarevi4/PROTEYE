@@ -39,6 +39,7 @@ class GNNLayer(nn.Module):
         hidden_dim: int = 128,
     ) -> None:
         super().__init__()
+        self.hidden_dim = hidden_dim
 
         # Message MLP: (h_i ⊕ h_j ⊕ e_ij) → message
         self.message_mlp = nn.Sequential(
@@ -81,7 +82,7 @@ class GNNLayer(nn.Module):
         if edge_index.shape[1] == 0:
             # No edges: skip aggregation, apply identity update
             return self.norm(h + self.update_mlp(
-                torch.cat([h, torch.zeros(n, self.message_mlp[0].out_features,
+                torch.cat([h, torch.zeros(n, self.hidden_dim,
                                           device=h.device)], dim=-1)
             ))
 

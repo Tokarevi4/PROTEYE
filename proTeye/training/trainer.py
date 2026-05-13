@@ -103,7 +103,7 @@ class Trainer:
                 self.scheduler.step(val_loss)
 
             elapsed = time.time() - t0
-            val_str = f"  val_loss={val_loss:.4f}" if val_loss is not None else ""
+            val_str = f"  val_loss={val_loss:.4f}" if val_loss is not None else "  val_loss=N/A"
             print(
                 f"Epoch {epoch:03d}/{num_epochs}  "
                 f"train_loss={train_loss:.4f}{val_str}  "

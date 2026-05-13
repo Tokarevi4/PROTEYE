@@ -129,7 +129,7 @@ def collate_fn(batch: List[ProteinGraph]) -> dict:
         "node_features": torch.cat(node_feats_list, dim=0),
         "ca_coords": torch.cat(ca_coords_list, dim=0),
         "aa_indices": torch.cat(aa_idx_list, dim=0),
-        "edge_index": torch.cat(edge_index_list, dim=1) if edge_index_list[0].shape[1] > 0
+        "edge_index": torch.cat(edge_index_list, dim=1) if edge_index_list and edge_index_list[0].shape[1] > 0
                       else torch.zeros((2, 0), dtype=torch.long),
         "edge_features": torch.cat(edge_feats_list, dim=0),
         "batch_idx": torch.cat(batch_idx_list, dim=0),

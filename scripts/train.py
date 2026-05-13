@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=1,
-                        help="Graphs are variable-size; keep 1 for simplicity")
+                        help="Graphs are variable-size; only batch_size=1 is currently supported")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--hidden_dim", type=int, default=128)
     parser.add_argument("--encoder_layers", type=int, default=4)
@@ -83,7 +83,10 @@ def main() -> None:
         dataset, [n_train, n_val],
         generator=torch.Generator().manual_seed(args.seed),
     )
-    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True,
+    if args.batch_size != 1:
+        print("Warning: only batch_size=1 is currently supported; ignoring --batch_size value.")
+
+    train_loader = DataLoader(train_set, batch_size=1, shuffle=True,
                               collate_fn=lambda b: b[0])
     val_loader = DataLoader(val_set, batch_size=1, shuffle=False,
                             collate_fn=lambda b: b[0])
