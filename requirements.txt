@@ -4,3 +4,4 @@ biopython
 py3Dmol
 jupyter
 torch
+scipy
