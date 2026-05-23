@@ -69,6 +69,7 @@ def train():
     )
 
     criterion = nn.MSELoss()
+    loss_history = []
 
     epochs = 500
 
@@ -89,8 +90,8 @@ def train():
         )
 
         loss.backward()
-
         optimizer.step()
+        loss_history.append(loss.item())
 
         if epoch % 50 == 0:
 
@@ -98,6 +99,15 @@ def train():
                 f"Epoch {epoch} | "
                 f"Loss: {loss.item():.4f}"
             )
+    return (
+        model,
+        noisy_coords,
+        clean_coords,
+        edge_index,
+        edge_features,
+        node_features,
+        loss_history
+    )
 
 if __name__ == "__main__":
 
