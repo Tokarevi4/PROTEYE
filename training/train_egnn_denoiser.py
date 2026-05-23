@@ -8,15 +8,12 @@ import torch.optim as optim
 from prot_eye.spatial_tensor_builder import (
     build_spatial_graph_tensors
 )
-
 from prot_eye.edge_features import (
     build_edge_features
 )
-
 from prot_eye.noise import (
     add_coordinate_noise
 )
-
 from models.egnn_denoiser import (
     EGNNDenoiser
 )
@@ -40,7 +37,7 @@ def train():
     node_features = tensors["node_features"].to(device)
     edge_index = tensors["edge_index"].to(device)
 
-    # 2. Генерация зашумленных координат для задачи денойзинга
+    # 2. Генерация зашумленных координат
     noisy_coords = torch.tensor(
         add_coordinate_noise(
             clean_coords.cpu().numpy(),
@@ -49,23 +46,33 @@ def train():
         dtype=torch.float32
     ).to(device)
 
-    # 3. Инициализация модели и оптимизатора
+    # 3. Инициализация модели, оптимизатора и шедулера
     model = EGNNDenoiser().to(device)
     optimizer = optim.Adam(
         model.parameters(),
         lr=0.001
     )
+    
+    # Увеличиваем количество эпох для плавной физической оптимизации
+    epochs = 1500
+    
+    # Косинусный шедулер для тонкой финальной настройки весов на поздних эпохах
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, 
+        T_max=epochs, 
+        eta_min=1e-5
+    )
 
-    criterion = nn.MSELoss()
+    # ПОЛИРОВКА 1: Переход на HuberLoss (Smooth L1) для устойчивости к выбросам на петлях
+    criterion = nn.HuberLoss(delta=1.0)
     loss_history = []
-    epochs = 500
 
-    print("Старт обучения с физическими ограничениями...")
+    print(f"Старт финального обучения (Эпох: {epochs}) с полным физическим профилем...")
 
     for epoch in range(epochs):
         optimizer.zero_grad()
 
-
+        # Динамическое обновление признаков рёбер
         edge_features = build_edge_features(
             noisy_coords, 
             edge_index
@@ -79,28 +86,51 @@ def train():
             edge_features
         )
 
-
+        # ПОЛИРОВКА 2: Комплексный Physics-Informed Loss
+        # А) Координатный лосс (теперь HuberLoss)
         coord_loss = criterion(predicted_coords, clean_coords)
 
-        # Вычисляем расстояния между соседними аминокислотами в цепи (i и i+1)
+        # Б) Лосс длин связей (C_alpha - C_alpha)
         pred_bonds = torch.linalg.norm(predicted_coords[1:] - predicted_coords[:-1], dim=1)
         clean_bonds = torch.linalg.norm(clean_coords[1:] - clean_coords[:-1], dim=1)
         bond_loss = criterion(pred_bonds, clean_bonds)
 
-        # Итоговый лосс с весовым коэффициентом для стабилизации геометрии
-        loss = coord_loss + 0.5 * bond_loss
+        # В) ПОЛИРОВКА 3: Лосс валентных углов (борьба со сломанными зигзагами в петлях)
+        v1 = predicted_coords[1:-1] - predicted_coords[:-2]
+        v2 = predicted_coords[2:] - predicted_coords[1:-1]
+        v1_norm = v1 / (torch.linalg.norm(v1, dim=1, keepdim=True) + 1e-6)
+        v2_norm = v2 / (torch.linalg.norm(v2, dim=1, keepdim=True) + 1e-6)
+        pred_angles = torch.sum(v1_norm * v2_norm, dim=1)
 
-        # Обратное распространение и шаг оптимизатора
+        v1_c = clean_coords[1:-1] - clean_coords[:-2]
+        v2_c = clean_coords[2:] - clean_coords[1:-1]
+        v1_c_norm = v1_c / (torch.linalg.norm(v1_c, dim=1, keepdim=True) + 1e-6)
+        v2_c_norm = v2_c / (torch.linalg.norm(v2_c, dim=1, keepdim=True) + 1e-6)
+        clean_angles = torch.sum(v1_c_norm * v2_c_norm, dim=1)
+        
+        angle_loss = criterion(pred_angles, clean_angles)
+
+        # Итоговый сбалансированный лосс
+        loss = coord_loss + 0.5 * bond_loss + 0.3 * angle_loss
+
+        # Шаг оптимизации
         loss.backward()
         optimizer.step()
+        
+        # ПОЛИРОВКА 4: Шаг расписания скорости обучения
+        scheduler.step()
+        
         loss_history.append(loss.item())
 
-        if epoch % 50 == 0:
+        if epoch % 100 == 0 or epoch == epochs - 1:
+            current_lr = optimizer.param_groups[0]['lr']
             print(
-                f"Epoch {epoch:03d} | "
-                f"Total Loss: {loss.item():.4f} | "
-                f"Coord MSE: {coord_loss.item():.4f} | "
-                f"Bond MSE: {bond_loss.item():.4f}"
+                f"Epoch {epoch:04d} | "
+                f"Loss: {loss.item():.4f} | "
+                f"Coord: {coord_loss.item():.4f} | "
+                f"Bond: {bond_loss.item():.4f} | "
+                f"Angle: {angle_loss.item():.4f} | "
+                f"LR: {current_lr:.6f}"
             )
 
     return (
