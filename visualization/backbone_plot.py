@@ -10,7 +10,7 @@ from prot_eye.pdb_parser import extract_ca_atoms
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-PDB_PATH = BASE_DIR / "data" / "sample" / "1UBQ.pdb"
+PDB_PATH = BASE_DIR / "data" / "sample" / "1AAR.pdb"
 
 
 def plot_backbone(pdb_path):

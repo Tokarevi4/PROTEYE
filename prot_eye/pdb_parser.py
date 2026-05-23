@@ -34,7 +34,7 @@ def extract_ca_atoms(pdb_path):
 if __name__ == "__main__":
 
     atoms = extract_ca_atoms(
-        "data/sample/1UBQ.pdb"
+        "data/sample/1AAR.pdb"
     )
 
     print(f"Extracted {len(atoms)} Cα atoms\n")

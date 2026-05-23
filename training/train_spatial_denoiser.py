@@ -19,7 +19,7 @@ from models.graph_denoiser import (
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-PDB_PATH = BASE_DIR / "data" / "sample" / "1UBQ.pdb"
+PDB_PATH = BASE_DIR / "data" / "sample" / "1AAR.pdb"
 
 
 def train():

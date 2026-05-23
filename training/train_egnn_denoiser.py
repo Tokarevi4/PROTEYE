@@ -19,7 +19,7 @@ from models.egnn_denoiser import (
 )
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PDB_PATH = BASE_DIR / "data" / "sample" / "1UBQ.pdb"
+PDB_PATH = BASE_DIR / "data" / "sample" / "1AAR.pdb"
 
 def train():
     device = torch.device(
@@ -113,15 +113,18 @@ def train():
         # Итоговый сбалансированный лосс
         loss = coord_loss + 0.5 * bond_loss + 0.3 * angle_loss
 
-        # Шаг оптимизации
+        # 1. Считаем градиенты
         loss.backward()
+
+        # 2. КРИТИЧЕСКИЙ ШАГ: Делаем реальный шаг оптимизатора (обновляем веса)
         optimizer.step()
         
-        # ПОЛИРОВКА 4: Шаг расписания скорости обучения
+        # 3. Шаг расписания скорости обучения (СТРОГО ПОСЛЕ optimizer.step())
         scheduler.step()
         
         loss_history.append(loss.item())
 
+        # Выводим логи каждые 100 эпох
         if epoch % 100 == 0 or epoch == epochs - 1:
             current_lr = optimizer.param_groups[0]['lr']
             print(

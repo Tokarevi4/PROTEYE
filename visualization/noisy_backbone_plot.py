@@ -11,7 +11,7 @@ from prot_eye.noise import add_coordinate_noise
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-PDB_PATH = BASE_DIR / "data" / "sample" / "1UBQ.pdb"
+PDB_PATH = BASE_DIR / "data" / "sample" / "1AAR.pdb"
 
 
 def plot_noisy_backbone(
