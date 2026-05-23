@@ -51,10 +51,11 @@ class GeometricGraphLayer(nn.Module):
 
         num_nodes = node_features.shape[0]
 
+        hidden_dim = self.message_mlp[-1].out_features
         aggregated = torch.zeros(
             (
                 num_nodes,
-                self.update_mlp[-1].out_features
+                hidden_dim
             ),
             device=node_features.device
         )
