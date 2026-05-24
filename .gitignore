@@ -29,3 +29,7 @@ temp/
 
 # Visual
 visualization/save_figures.py
+
+# Archive
+
+archive/
