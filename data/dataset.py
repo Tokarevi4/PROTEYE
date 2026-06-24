@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from pathlib import Path
-from features import one_hot_encode_residues
+from data.features import one_hot_encode_residues
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
