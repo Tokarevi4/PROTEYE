@@ -26,6 +26,7 @@ outputs/
 # Temporary
 tmp/
 temp/
+scripts/
 
 # Visual
 visualization/save_figures.py
