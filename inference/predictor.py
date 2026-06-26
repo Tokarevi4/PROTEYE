@@ -15,7 +15,7 @@ class ProtEyePredictor:
 
         self.model.load_state_dict(
             torch.load(
-                "weights/best_model_3.pt",
+                "weights/proteye_general.pt",
                 map_location=self.device
             )
         )
