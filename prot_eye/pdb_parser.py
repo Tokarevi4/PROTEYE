@@ -1,10 +1,8 @@
 from Bio.PDB import PDBParser
+import numpy as np
 
 
 def extract_ca_atoms(pdb_path):
-    """
-    Extract C-alpha atoms from PDB structure.
-    """
 
     parser = PDBParser(QUIET=True)
 
@@ -19,9 +17,9 @@ def extract_ca_atoms(pdb_path):
         for chain in model:
             for residue in chain:
 
-                if 'CA' in residue:
+                if "CA" in residue:
 
-                    atom = residue['CA']
+                    atom = residue["CA"]
 
                     ca_atoms.append({
                         "residue": residue.get_resname(),
@@ -31,13 +29,48 @@ def extract_ca_atoms(pdb_path):
     return ca_atoms
 
 
+def pdb_to_graph(pdb_path, cutoff=10.0):
+    """
+    Convert protein structure into graph.
+
+    Returns:
+        node_features : [N,3]
+        edge_index : [2,E]
+    """
+
+    atoms = extract_ca_atoms(pdb_path)
+
+    coords = np.array([
+        atom["coord"]
+        for atom in atoms
+    ])
+
+    n = len(coords)
+
+    edges = []
+
+    for i in range(n):
+        for j in range(i + 1, n):
+
+            dist = np.linalg.norm(
+                coords[i] - coords[j]
+            )
+
+            if dist < cutoff:
+
+                edges.append([i, j])
+                edges.append([j, i])
+
+    edge_index = np.array(edges).T
+
+    return coords, edge_index
+
+
 if __name__ == "__main__":
 
-    atoms = extract_ca_atoms(
+    coords, edge_index = pdb_to_graph(
         "data/sample/1AAR.pdb"
     )
 
-    print(f"Extracted {len(atoms)} Cα atoms\n")
-
-    for atom in atoms[:5]:
-        print(atom)
+    print("Nodes:", coords.shape)
+    print("Edges:", edge_index.shape)

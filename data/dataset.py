@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from pathlib import Path
-from data.features import one_hot_encode_residues
+from data.features import one_hot_encode_residues  # Импортируем вашу функцию
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
@@ -27,36 +27,37 @@ class ProteinDataset(Dataset):
     def __getitem__(self, idx):
         sample_dir = self.samples[idx]
 
-        x = np.load(sample_dir / "input.npy")    
-        y = np.load(sample_dir / "target.npy")   
+        # 1. Загружаем чистые координаты
+        x_raw = np.load(sample_dir / "input.npy")    
+        y_raw = np.load(sample_dir / "target.npy")   
 
-        x = torch.tensor(x, dtype=torch.float32)
-        y = torch.tensor(y, dtype=torch.float32)
+        pos = torch.tensor(x_raw, dtype=torch.float32)
+        y = torch.tensor(y_raw, dtype=torch.float32)
 
-        # 1. Разделяем координаты и данные аминокислот
-        
-        pos = x
+        # 2. Загружаем последовательность аминокислот белка
+        # ПРОВЕРКА: Предполагается, что в вашей папке сэмплов лежит файл со списком остатков.
+        # Например, текстовый residues.txt или сохраненный numpy-массив.
+        residues_file_txt = sample_dir / "residues.txt"
+        residues_file_npy = sample_dir / "residues.npy"
 
-        h = pos.clone()
-        
-        # ЗАМЕНИТЕ ЭТУ СТРОКУ в зависимости от того, как устроены ваши данные:
-        # Если в input.npy после 3-й колонки идут ID аминокислот (например, числа от 0 до 19):
-        residues = x[:, 3:].long().squeeze(-1) 
- 
+        if residues_file_txt.exists():
+            with open(residues_file_txt, "r") as f:
+                residues = f.read().splitlines()
+        elif residues_file_npy.exists():
+            residues = np.load(residues_file_npy).tolist()
+        else:
+            # ФОЛБЭК: Если типов аминокислот в данных нет вообще, временно заполняем "UNKNOWN"
+            residues = ["UNK"] * pos.size(0)
 
-        # 3. ПОЛНОСТЬЮ УДАЛИТЕ ИЛИ ЗАКОММЕНТИРУЙТЕ СЛЕДУЮЩУЮ СТРОКУ (она ломает код):
-        # edge_index = radius_graph(pos, r=self.cutoff) 
+        # Кодируем последовательность в One-Hot вектор признаков [N, 21]
+        h = one_hot_encode_residues(residues)
 
-        # 4. Быстрое векторное вычисление матрицы расстояний (без циклов)
+        # 3. СТРОИМ ТОПОЛОГИЮ ГРАФА
         dist_matrix = torch.cdist(pos, pos, p=2)
-
-        # Маска смежности: расстояние меньше cutoff, убираем self-loops
-        adj_matrix = (dist_matrix < self.cutoff) & (~torch.eye(pos.size(0), dtype=torch.bool))
-
-        # Превращаем матрицу смежности в формат edge_index [2, E]
+        adj_matrix = (dist_matrix < self.cutoff) & (~torch.eye(pos.size(0), dtype=torch.bool, device=pos.device))
         edge_index = adj_matrix.nonzero(as_tuple=False).t().contiguous()
 
-        # Безопасный фолбэк для изолированных белков
+        # Безопасный фолбэк для изолированных белков (KNN)
         if edge_index.size(1) < self.min_edges:
             if self.use_knn_fallback and pos.size(0) > 1:
                 idx_i = torch.arange(pos.size(0))
@@ -66,8 +67,8 @@ class ProteinDataset(Dataset):
                 edge_index = torch.empty((2, 0), dtype=torch.long)
 
         return Data(
-            x=h,
-            pos=pos,
+            x=h,               # Признаки узлов размерности [N, 21]
+            pos=pos,           # Чистые координаты (будут зашумлены на обучении)
             edge_index=edge_index,
             y=y
         )
@@ -97,43 +98,28 @@ def create_dataloader(
     return dataset, loader
 
 
-
-#  Sanity check utilities
+# Проверка корректности сборки батча
 def sanity_check_batch(batch):
-    print("\n===== ProtEye SANITY CHECK =====")
+    print("\n===== ProtEye DATASET SANITY CHECK =====")
+    print("x shape (features):", batch.x.shape)        # Должно быть [N, 21]
+    print("pos shape (coords):", batch.pos.shape)      # Должно быть [N, 3]
+    print("edge_index shape :", batch.edge_index.shape)
+    print("y shape (target)  :", batch.y.shape)
+    print("Batch size        :", batch.batch.max().item() + 1)
 
-    print("x shape:", batch.x.shape)
-    print("pos shape:", batch.pos.shape)
-    print("edge_index shape:", batch.edge_index.shape)
-    print("y shape:", batch.y.shape)
-
-    print("batch size:", batch.batch.max().item() + 1)
-
-    # NaN / Inf checks
     print("\nNaN checks:")
     print("x:", torch.isnan(batch.x).any().item())
     print("pos:", torch.isnan(batch.pos).any().item())
     print("y:", torch.isnan(batch.y).any().item())
 
-    # edge sanity
-    print("\nEdges per node:",
-          batch.edge_index.size(1) / batch.x.size(0))
-
-
 
 if __name__ == "__main__":
-
     dataset, loader = create_dataloader(
         root_dir="data/train",
         batch_size=4,
         cutoff=10.0
     )
 
-    print("Samples:", len(dataset))
-
+    print("Total Samples:", len(dataset))
     batch = next(iter(loader))
-
     sanity_check_batch(batch)
-
-    sample = np.load("data/train/sample_000000/input.npy")
-    print(sample.shape)
