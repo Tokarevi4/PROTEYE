@@ -1,8 +1,10 @@
 # 🧬 PROTEYE: AI-Powered Protein Structure Reconstruction & Conformational Dynamics
 
-[![License: MIT](https://shields.io)](https://opensource.org)
-[![Python 3.10+](https://shields.io)](https://python.org)
-[![PyTorch](https://shields.io)](https://pytorch.org)
+![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.7-EE4C2C?logo=pytorch&logoColor=white)
+![PyTorch Geometric](https://img.shields.io/badge/PyTorch_Geometric-2.6-orange)
+![License](https://img.shields.io/badge/License-MIT-success)
+![Status](https://img.shields.io/badge/Status-Active-brightgreen)
 
 **PROTEYE** — это научно-исследовательский фреймворк на базе эквивариантных графовых нейронных сетей (EGNN), предназначенный для высокоскоростного денойзинга 3D-координат макромолекул и моделирования альтернативных конформаций белков. 
 
