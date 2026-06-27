@@ -6,6 +6,7 @@ import torch.optim as optim
 from torch.utils.data import random_split 
 from torch_geometric.loader import DataLoader
 
+
 from data.dataset import ProteinDataset
 from models.egnn_autoencoder import ProtEyeEGNN
 
@@ -82,7 +83,7 @@ def train():
     train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False)
 
-    model = ProtEyeEGNN(input_feats_dim=3, hidden_dim=64).to(device)
+    model = ProtEyeEGNN(input_feats_dim=24, hidden_dim=64).to(device)
     optimizer = optim.Adam(model.parameters(), lr=CONFIG["learning_rate"])
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=CONFIG["epochs"], eta_min=1e-5)
     
@@ -99,28 +100,61 @@ def train():
             batch = batch.to(device)
             optimizer.zero_grad()
             
-            # 1. Генерируем чистый случайный Гауссов шум (таргет для модели)
-            noise_vectors = torch.randn_like(batch.pos)
+            # 1. Генерируем чистый случайный Гауссов шум относительно чистых координат batch.y
+            noise_vectors = torch.randn_like(batch.y)
             
-            # 2. Сэмплируем случайную интенсивность шума для батча
-            batch_noise_std = np.random.uniform(CONFIG["min_noise_std"], CONFIG["max_noise_std"])
+            # 2. Сэмплируем случайную интенсивность шума для батча (с 10% шансом на чистый белок)
+            if np.random.rand() < 0.1:
+                batch_noise_std = 0.0
+            else:
+                batch_noise_std = np.random.uniform(CONFIG["min_noise_std"], CONFIG["max_noise_std"])
             
-            # 3. Зашумляем исходные координаты (batch.pos)
-            noisy_pos = batch.pos + noise_vectors * batch_noise_std
+            # 3. Зашумляем строго чистые координаты из таргета
+            noisy_pos = batch.y + noise_vectors * batch_noise_std
             
-            # 4. Модель пытается предсказать исходный вектор шума
-            pred_noise = model(noisy_pos, batch.edge_index)
+            # 4. Пропускаем через эквивариантную модель ProtEyeEGNN
+            pred_noise = model(
+                x=batch.x, 
+                pos=noisy_pos, 
+                edge_index=batch.edge_index, 
+                batch_idx=batch.batch
+            )
             
-            # 5. Считаем лосс между предсказанным и реальным шумом (значения около 1.0, лосс стабилен)
-            loss = criterion(pred_noise, noise_vectors)
+            # 5. СТРАТЕГИЯ 1: Расчет базового лосса денойзинга (Huber Loss)
+            loss_noise = criterion(pred_noise, noise_vectors)
             
-            loss.backward()
+            # Динамически увеличиваем вес лосса для чистых белков и малых шумов
+            if batch_noise_std == 0.0:
+                loss_weight = 10.0
+            else:
+                loss_weight = 1.0 / (batch_noise_std + 0.1)
+                
+            weighted_loss = loss_noise * loss_weight
+
+            # 6. СТРАТЕГИЯ 2: Внедрение физического инварианта белковой цепи (≈ 3.8 Å)
+            # Рассчитываем позиции атомов, какими их видит модель после очистки
+            pred_coords = noisy_pos - pred_noise * batch_noise_std
             
-            # Защита от взрыва градиентов
+            # Извлекаем индексы связанных соседей в графе молекулы
+            row, col = batch.edge_index
+            
+            # Считаем межатомные расстояния в восстановленной структуре
+            pred_dist = torch.sqrt(torch.sum((pred_coords[row] - pred_coords[col]) ** 2, dim=-1) + 1e-6)
+            
+            # ИСПРАВЛЕНО: Считаем MAE вместо MSE (модуль разницы, а не квадрат), чтобы лосс не взлетал
+            loss_geometry = torch.mean(torch.abs(pred_dist - 3.8))
+            
+            # ИСПРАВЛЕНО: Уменьшаем коэффициент до 0.01 для идеального баланса градиентов
+            total_loss = weighted_loss + 0.01 * loss_geometry
+            
+            # 7. Обратный проход и шаг оптимизатора
+            total_loss.backward()
+            
+            # Стабильный клиппинг градиентов для защиты от NaN
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             
             optimizer.step()
-            total_train_loss += loss.item() * batch.num_graphs
+            total_train_loss += total_loss.item() * batch.num_graphs
 
         scheduler.step()
         average_train_loss = total_train_loss / len(train_dataset)
@@ -139,16 +173,21 @@ def train():
         with torch.no_grad():
             for batch in val_loader:
                 batch = batch.to(device)
-                clean_coords = batch.y
+                clean_coords = batch.y  # Чистые исходные координаты
                 
-                # Генерируем тестовый шум
-                noise_vectors = torch.randn_like(batch.pos)
-                noisy_pos = batch.pos + noise_vectors * val_noise_std
+                # ИСПРАВЛЕНО: Генерируем тестовый шум относительно ЧИСТЫХ координат clean_coords
+                noise_vectors = torch.randn_like(clean_coords)
+                noisy_pos = clean_coords + noise_vectors * val_noise_std
                 
-                # Модель предсказывает шум
-                pred_noise = model(pos=noisy_pos, edge_index=batch.edge_index)
+                # ИСПРАВЛЕНО: Передаем в модель One-Hot аминокислоты x, зашумленные позиции и указатель батча
+                pred_noise = model(
+                    x=batch.x,
+                    pos=noisy_pos,
+                    edge_index=batch.edge_index,
+                    batch_idx=batch.batch
+                )
                 
-                # Восстанавливаем координаты
+                # Восстанавливаем координаты (модель предсказывает чистый вектор шума)
                 pred_coords = noisy_pos - pred_noise * val_noise_std
                 
                 # Объективный лосс валидации
@@ -157,7 +196,7 @@ def train():
                 
                 # Попробелковое выравнивание Кабша для МЕТРИК
                 aligned_pred = torch.zeros_like(pred_coords)
-                aligned_noisy = torch.zeros_like(noisy_pos)  # <-- Тензор для выровненного зашумленного входа
+                aligned_noisy = torch.zeros_like(noisy_pos)  
                 
                 for batch_idx in torch.unique(batch.batch):
                     mask = (batch.batch == batch_idx)
@@ -183,6 +222,7 @@ def train():
                 true_dist = torch.sqrt(torch.sum((clean_coords[row] - clean_coords[col]) ** 2, dim=-1) + 1e-6)
                 edge_err = torch.mean(torch.abs(pred_dist - true_dist))
                 all_edge_errors.append(edge_err.item())
+
 
         # Агрегация результатов валидации
         avg_val_loss = total_val_loss / len(val_loader)
@@ -210,8 +250,8 @@ def train():
         # Логика сохранения лучшей модели
         if avg_rmse < best_val_rmse:
             best_val_rmse = avg_rmse
-            torch.save(model.state_dict(), "weights/best_model_4.pt")
-            print(f"--> [SAVE] Веса лучшей модели сохранены в weights\\best_model_4.pt с Val RMSE: {best_val_rmse:.4f} Å")
+            torch.save(model.state_dict(), "weights/test_model_100_2.pt")
+            print(f"--> [SAVE] Веса лучшей модели сохранены в weights\\test_model_100_2.pt с Val RMSE: {best_val_rmse:.4f} Å")
         print("-" * 85)
 
 

@@ -71,7 +71,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-@st.cache_resource
+# @st.cache_resource
 def load_predictor():
     """
     Безопасно инициализирует ваш класс предиктора и кэширует его инстанс.
@@ -114,32 +114,34 @@ def show_overlay_custom(original_pdb, predicted_pdb, height=400, width=540):
 
 
 def calculate_all_dashboard_metrics(clean_target, noisy_coords, pred_coords):
+    # 1. Выравнивание Кабша для зашумленного входа (ДО модели) для честного TM-score и RMSD
+    noisy_aligned = kabsch_align(clean_target.cpu(), noisy_coords.cpu()).to(clean_target.device)
 
-    # 1. Ошибка структуры ДО модели (величина наложенного шума)
-    initial_rmsd = rmsd(noisy_coords, clean_target)
+    # 2. Ошибка структуры ДО модели (величина реального наложенного шума после выравнивания)
+    initial_rmsd = rmsd(noisy_aligned, clean_target)
     
-    # 2. Выравнивание Кабша для честного расчета финального RMSD
+    # 3. Выравнивание Кабша для результата работы модели (ПОСЛЕ денойзинга)
     pred_aligned = kabsch_align(clean_target.cpu(), pred_coords.cpu()).to(clean_target.device)
     
-    # 3. Финальный RMSD после пространственного совмещения
+    # 4. Финальный RMSD после пространственного совмещения
     final_rmsd = rmsd(pred_aligned, clean_target)
     
-    # 4. Физическая амплитуда движения атомов, совершенная моделью
+    # 5. Физическая амплитуда движения атомов, совершенная моделью
     shift = torch.norm(pred_coords - noisy_coords, dim=1)
     mean_shift = shift.mean().item()
     max_shift = shift.max().item()
     
-    # 5. Аппроксимация TM-score по стандартной формуле Zhang & Skolnick на базе расстояний
+    # 6. Аппроксимация TM-score по стандартной формуле Zhang & Skolnick на базе ВЫРОВНЕННЫХ расстояний
     L = clean_target.shape[0]
     d0 = max(1.24 * np.power(max(L - 15, 0.5), 1/3) - 1.8, 0.5)
     
-    dist_sq_before = torch.sum((clean_target - noisy_coords) ** 2, dim=1)
+    # ИСПРАВЛЕНО: Считаем расстояния строго по пространственно совмещенным координатам
+    dist_sq_before = torch.sum((clean_target - noisy_aligned) ** 2, dim=1)
     dist_sq_after = torch.sum((clean_target - pred_aligned) ** 2, dim=1)
     
     tm_before = torch.mean(1.0 / (1.0 + (dist_sq_before / (d0 ** 2)))).item()
     tm_after = torch.mean(1.0 / (1.0 + (dist_sq_after / (d0 ** 2)))).item()
     
-    # Возвращаем готовый словарь со строковыми значениями для вывода в Streamlit
     return {
         "rmsd_before": f"{initial_rmsd:.4f} Å",
         "rmsd_after": f"{final_rmsd:.4f} Å",
@@ -148,6 +150,7 @@ def calculate_all_dashboard_metrics(clean_target, noisy_coords, pred_coords):
         "tm_before": f"{tm_before:.4f}",
         "tm_after": f"{tm_after:.4f}"
     }
+
 
 with st.sidebar:
     st.title("🧬 ProtEye")
@@ -210,6 +213,11 @@ with st.sidebar:
             clean_target_coords = torch.tensor(np.array(clean_coords_list, dtype=np.float32))
             residues_count = clean_target_coords.size(0)
             
+            # ИСПРАВЛЕНО: Извлекаем трехбуквенные имена остатков для One-Hot эмбеддингов в модели
+            residues_list = [res.get_resname().upper() for res in structure.get_residues()]
+            # Синхронизируем длину массива аминокислот с количеством C-alpha атомов
+            residues_list = residues_list[:residues_count]
+            
             # Наложение синтетического шума на координаты атомов
             if noise_std > 0.0:
                 noise_vectors = torch.randn_like(clean_target_coords) * noise_std
@@ -217,35 +225,31 @@ with st.sidebar:
             else:
                 noisy_coords = clean_target_coords.clone()
                 
-            # Алгоритмическое построение ребер k-NN графа (k=8)
-            edge_index_list = []
+            # ИСПРАВЛЕНО: Алгоритмическое построение ребер графа по радиусу отсечки 10.0 Å, как на обучении
             if residues_count > 1:
-                dist_matrix = torch.cdist(noisy_coords, noisy_coords)
-                for i in range(residues_count):
-                    k_neighbors = min(9, residues_count)
-                    top_k_idx = torch.topk(dist_matrix[i], k=k_neighbors, largest=False).indices[1:]
-                    for neighbor_idx in top_k_idx:
-                        edge_index_list.append([i, int(neighbor_idx)])
-            
-            if edge_index_list:
-                edge_index = torch.tensor(edge_index_list, dtype=torch.long).t().contiguous()
+                dist_matrix = torch.cdist(noisy_coords, noisy_coords, p=2)
+                # Матрица смежности: расстояние меньше 10.0 Ангстрем и исключаем главную диагональ (self-loops)
+                adj_matrix = (dist_matrix < 10.0) & (~torch.eye(residues_count, dtype=torch.bool, device=clean_target_coords.device))
+                edge_index = adj_matrix.nonzero(as_tuple=False).t().contiguous()
             else:
                 edge_index = torch.empty((2, 0), dtype=torch.long)
                 
             edges_count = edge_index.size(1)
             
-            # Словарь, который примет метод predictor.predict()
+            # ИСПРАВЛЕНО: Передаем в предиктор полный комплект данных (координаты, ребра, аминокислоты и уровень шума)
             tensors = {
                 "coords": noisy_coords,
-                "edge_index": edge_index
+                "edge_index": edge_index,
+                "residues": residues_list,
+                "noise_std": noise_std
             }
             
             with info_container:
                 st.markdown("📋 **Параметры графа молекулы:**")
                 st.text(f"Остатков (узлов): {residues_count}")
                 st.text(f"Рёбер (связей): {edges_count}")
-                st.text("Тип графа: k-NN (k=8)")
-                st.text("Радиус связи: ~8.0 Å")
+                st.text("Тип графа: Radius-based Cutoff")  # Обновили для соответствия дипломной документации
+                st.text("Радиус связи: 10.0 Å")            # Обновили для соответствия дипломной документации
         else:
             st.error("В PDB файле не найдены C-alpha атомы (CA)!")
     else:
@@ -255,7 +259,6 @@ with st.sidebar:
             st.info("Загрузите PDB файл, чтобы отобразить геометрические параметры графа молекулы.")
 
     st.markdown("<div class='sidebar-footer'>ProtEye EGNN v0.5</div>", unsafe_allow_html=True)
-
 
 if uploaded_file and tensors is not None:
     

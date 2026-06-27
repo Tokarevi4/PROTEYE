@@ -1,11 +1,14 @@
 # Python
-__pycache__/
+**/__pycache__/
 *.py[cod]
+*.pyo
+*.pyd
 
 # Virtual env
 venv/
 .env/
 .venv/
+env/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -17,20 +20,24 @@ venv/
 # OS
 .DS_Store
 
-# Outputs
+# Outputs & Reports
 outputs/
+reports/
 
-# Cache
+# Cache & Temporary
 .cache/
-
-# Temporary
 tmp/
 temp/
-scripts/
+uploads/
 
-# Visual
-visualization/save_figures.py
+# Data
+data/
+
+# Weigth
+weights/*.pt
+
+# Visual (оставляем скрытие графиков, если нужно)
+outputs/
 
 # Archive
-
 archive/
