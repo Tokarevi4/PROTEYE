@@ -33,9 +33,6 @@ uploads/
 # Data
 data/
 
-# Weigth
-weights/*.pt
-
 # Visual (оставляем скрытие графиков, если нужно)
 outputs/
 
